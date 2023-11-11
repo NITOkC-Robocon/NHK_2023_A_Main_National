@@ -37,6 +37,7 @@ DigitalOut LED_MAIN(PB_7);
 
 void beyondAuto(void);
 void liftShoulder(void);
+void liftShoulderAuto(int shoulder_target_height);
 void liftHelper(void);
 void liftCenterAuto(int center_target_height);
 void liftCenter(void);
@@ -132,12 +133,12 @@ int main() {
 
         if(advanced_flag) {
             hindfoot_target_speed = -lift_direction * 0.7;
-            center_target_speed = -helper_direction * 0.5;
+            center_target_speed = -helper_direction * 0.8;
             auto_count = 0;
         }
         else {
             shoulder_target_speed = lift_direction;
-            helper_target_speed = -helper_direction;
+            helper_target_speed = -helper_direction * 0.7;
         }
 
         if(auto_start) {
@@ -145,7 +146,7 @@ int main() {
                 beyondAuto(); 
             }
             else {
-                helper_rolling_speed = 0.5;
+                helper_rolling_speed = 1.0;
             }
         }
 
@@ -174,13 +175,19 @@ void beyondAuto(void) {
     if(auto_count < 10) {
         RE_center.Reset();
     }
-    else if(auto_count < 150) {
+    else if(auto_count < 100) {
+        liftShoulderAuto(-1000);
+    }
+    else if(auto_count < 200) {
+        liftShoulderAuto(0);
+    }
+    else if(auto_count < 300) {
         liftCenterAuto(900);
     }
-    else if(auto_count < 350) {
+    else if(auto_count < 400) {
         liftCenterAuto(-10);
     }
-    else if(auto_count < 450) {
+    else if(auto_count < 500) {
         hindfoot_target_speed = -0.7;
     }
     else if(auto_count < 550) {
@@ -216,6 +223,14 @@ void liftShoulder(void) {
     M_shoulder.drive(current_speed);
 
     // PC.printf("%d, %lf, %lf\r\n", RE_shoulder.Get_Count(), shoulder_target_speed, M_shoulder.read());
+}
+
+void liftShoulderAuto(int shoulder_target_height) {
+    double current_height = RE_center.Get_Count();
+    
+    if(shoulder_target_height - 10 > current_height) shoulder_target_speed = 1.0;
+    else if(shoulder_target_height + 10 < current_height) shoulder_target_speed = -1.0;
+    else shoulder_target_speed = 0;
 }
 
 void liftHelper(void) {
