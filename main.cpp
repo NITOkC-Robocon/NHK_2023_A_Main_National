@@ -19,6 +19,7 @@ DriveMotor M_shoulder(PB_1, PB_6, 0.5);
 DriveMotor M_helper(PB_15, PA_10);
 DriveMotor M_hindfoot(PB_14, PA_9);
 DriveMotor M_center(PB_13, PA_8);
+DriveMotor M_rolling(PA_11, PB_4);
 
 PwmOut S_tail(PC_8);
 
@@ -29,7 +30,8 @@ RotaryEncoder RE_center(PC_3, PC_2);
 DigitalIn SW_shoulder_upper(PA_4);
 DigitalIn SW_helper_upper(PB_0);
 DigitalIn SW_helper_lower(PC_1);
-// DigitalIn SW4(PC_0);
+DigitalIn SW_shoulder_lower(PC_0);
+DigitalIn SW_hindfoot_lower(PC_9);
 
 DigitalOut LED_MAIN(PB_7);
 
@@ -67,6 +69,8 @@ int encoder_lock = 0;
 
 int check_sum_correct = 0;
 
+int auto_count = 0;
+
 double helper_target_speed = 0.0;
 double shoulder_target_speed = 0.0;
 double center_target_speed = 0.0;
@@ -86,10 +90,14 @@ void initRobot(void) {
     M_hindfoot.stop();
     M_center.setFrequency(936);
     M_center.stop();
+    M_rolling.setFrequency(936);
+    M_rolling.stop();
     RE_shoulder.Reset();
     RE_center.Reset();
     // RE_helper.Reset();
     SW_shoulder_upper.mode(PullUp);
+    SW_shoulder_lower.mode(PullUp);
+    SW_hindfoot_lower.mode(PullUp);
     SW_helper_upper.mode(PullUp);
     SW_helper_lower.mode(PullUp);
     S_tail.period_ms(20);
@@ -102,6 +110,8 @@ int main() {
 
     while(true) {
         wait_us(500);
+
+        sendSignal(0);
 
         if(reply_sign == 0x00FF) {
             LED_MAIN = 1;
@@ -118,10 +128,12 @@ int main() {
         center_target_speed = 0.0;
         shoulder_target_speed = 0.0;
         helper_target_speed = 0.0;
+        double helper_rolling_speed = 0.0;
 
         if(advanced_flag) {
             hindfoot_target_speed = -lift_direction * 0.7;
-            center_target_speed = -helper_direction;
+            center_target_speed = -helper_direction * 0.5;
+            auto_count = 0;
         }
         else {
             shoulder_target_speed = lift_direction;
@@ -129,13 +141,19 @@ int main() {
         }
 
         if(auto_start) {
-            beyondAuto();
+            if(shoulder_target_speed == -1 && RE_shoulder.Get_Count() > -10) {
+                beyondAuto(); 
+            }
+            else {
+                helper_rolling_speed = 0.5;
+            }
         }
 
         liftShoulder();
         liftCenter();
         liftHindfoot();
         liftHelper();
+        M_rolling.drive(helper_rolling_speed);
 
         PC.printf("\033[H");
         PC.printf("EN_shoulder:\t%05d\r\nshoulder:\t%05.2lf\r\nEN_center:\t%05d\r\ncenter: \t%05.2lf\r\nhelper: \t%05.2lf\r\ncurtain:\t%05.2lf",RE_shoulder.Get_Count(),M_shoulder.read(),RE_center.Get_Count(),M_center.read(),M_helper.read(),M_hindfoot.read());
@@ -148,48 +166,43 @@ int main() {
 }
 
 void beyondAuto(void) {
-    static int count = 0;
     int flag = 0;
     encoder_lock = 1;
 
     // PC.printf("\033[H%5d", count);
 
-    if(advanced_flag) {
-        count = 0;
-    }
-
-    if(count < 100) {
+    if(auto_count < 10) {
         RE_center.Reset();
     }
-    else if(count < 400) {
-        liftCenterAuto(1000);
+    else if(auto_count < 150) {
+        liftCenterAuto(900);
     }
-    else if(count < 800) {
-        liftCenterAuto(0);
+    else if(auto_count < 350) {
+        liftCenterAuto(-10);
     }
-    else if(count < 900) {
+    else if(auto_count < 450) {
         hindfoot_target_speed = -0.7;
     }
-    else if(count < 1100) {
+    else if(auto_count < 550) {
         hindfoot_target_speed = 0.0;
     }
-    else if(count < 1200) {
+    else if(auto_count < 650) {
         hindfoot_target_speed = 0.7;
     }
-    else if(count < 1300) {
+    else if(auto_count < 750) {
         hindfoot_target_speed = 0.0;
     }
-    else if(count > 1300) {
-        count = 0;
+    else if(auto_count > 750) {
+        auto_count = 0;
     }
-    count++;
+    auto_count++;
 }
 
 void liftShoulder(void) {
     double current_speed = M_shoulder.read();
     current_speed += (shoulder_target_speed - current_speed) * SHOULDER_ACCELERATION;
     
-    if(RE_shoulder.Get_Count() > -10 && current_speed < 0) {
+    if((RE_shoulder.Get_Count() > -10 || SW_shoulder_lower.read() == 0) && current_speed < 0) {
         current_speed = 0;
     }
     
@@ -237,6 +250,11 @@ void liftCenter(void) {
 void liftHindfoot(void) {
     double current_speed = M_hindfoot.read();
     current_speed += (hindfoot_target_speed - current_speed) * CURTAIN_ACCELERATION;
+    
+    if(SW_hindfoot_lower.read() == 0 && current_speed > 0) {
+        current_speed = 0;
+    }
+
     M_hindfoot.drive(current_speed);
 }
 
@@ -264,8 +282,8 @@ inline void receiveSignal(void) {
             case 0: check_sum = 0x00; ++octets; break;
             case 1: extended_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
             case 2: chin_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
-            case 3: neck_rx_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
-            case 4: neck_ry_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
+            case 3: neck_ry_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
+            case 4: neck_rx_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
             case 5: neck_rz_sign_pool = read_sign; check_sum += read_sign; ++octets; break;
             case 6: 
                 check_sum_sign = read_sign;
@@ -312,7 +330,7 @@ inline void sendSignal(int format) {
     int send_sign;
     switch(format) {
         case 0:
-            send_sign = 0x0000;
+            send_sign = 0xFF00;
             break;
         case 1:
             send_sign = chin_sign + 0x0200;
