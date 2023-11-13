@@ -19,7 +19,9 @@ DriveMotor M_shoulder(PB_1, PB_6, 0.5);
 DriveMotor M_helper(PB_15, PA_10);
 DriveMotor M_hindfoot(PB_14, PA_9);
 DriveMotor M_center(PB_13, PA_8);
-DriveMotor M_rolling(PA_11, PB_4);
+
+DigitalOut M_rolling_D(PA_11);
+DigitalOut M_rolling(PB_4);
 
 PwmOut S_tail(PC_8);
 
@@ -91,8 +93,8 @@ void initRobot(void) {
     M_hindfoot.stop();
     M_center.setFrequency(936);
     M_center.stop();
-    M_rolling.setFrequency(936);
-    M_rolling.stop();
+    M_rolling_D = 1;
+    M_rolling = 0;
     RE_shoulder.Reset();
     RE_center.Reset();
     // RE_helper.Reset();
@@ -129,10 +131,10 @@ int main() {
         center_target_speed = 0.0;
         shoulder_target_speed = 0.0;
         helper_target_speed = 0.0;
-        double helper_rolling_speed = 0.0;
+        int helper_rolling_speed = 0;
 
         if(advanced_flag) {
-            hindfoot_target_speed = -lift_direction * 0.7;
+            hindfoot_target_speed = -lift_direction;
             center_target_speed = -helper_direction * 0.8;
             auto_count = 0;
         }
@@ -142,11 +144,11 @@ int main() {
         }
 
         if(auto_start) {
-            if(shoulder_target_speed == -1 && RE_shoulder.Get_Count() > -10) {
+            if(lift_direction == -1 && RE_shoulder.Get_Count() > -10) {
                 beyondAuto(); 
             }
             else {
-                helper_rolling_speed = 1.0;
+                helper_rolling_speed = 1;
             }
         }
 
@@ -154,7 +156,7 @@ int main() {
         liftCenter();
         liftHindfoot();
         liftHelper();
-        M_rolling.drive(helper_rolling_speed);
+        M_rolling = helper_rolling_speed;
 
         PC.printf("\033[H");
         PC.printf("EN_shoulder:\t%05d\r\nshoulder:\t%05.2lf\r\nEN_center:\t%05d\r\ncenter: \t%05.2lf\r\nhelper: \t%05.2lf\r\ncurtain:\t%05.2lf",RE_shoulder.Get_Count(),M_shoulder.read(),RE_center.Get_Count(),M_center.read(),M_helper.read(),M_hindfoot.read());
@@ -176,30 +178,24 @@ void beyondAuto(void) {
         RE_center.Reset();
     }
     else if(auto_count < 100) {
-        liftShoulderAuto(-1000);
-    }
-    else if(auto_count < 200) {
-        liftShoulderAuto(0);
-    }
-    else if(auto_count < 300) {
         liftCenterAuto(900);
     }
-    else if(auto_count < 400) {
+    else if(auto_count < 200) {
         liftCenterAuto(-10);
     }
-    else if(auto_count < 500) {
-        hindfoot_target_speed = -0.7;
+    else if(auto_count < 300) {
+        hindfoot_target_speed = -1.0;
     }
-    else if(auto_count < 550) {
+    else if(auto_count < 450) {
         hindfoot_target_speed = 0.0;
     }
-    else if(auto_count < 650) {
+    else if(auto_count < 600) {
         hindfoot_target_speed = 0.7;
     }
-    else if(auto_count < 750) {
+    else if(auto_count < 650) {
         hindfoot_target_speed = 0.0;
     }
-    else if(auto_count > 750) {
+    else if(auto_count > 650) {
         auto_count = 0;
     }
     auto_count++;
@@ -213,7 +209,7 @@ void liftShoulder(void) {
         current_speed = 0;
     }
     
-    if(SW_shoulder_upper.read() == 0 && current_speed > 0) {
+    if((RE_shoulder.Get_Count() < -2500 || SW_shoulder_upper.read() == 0) && current_speed > 0) {
         current_speed = 0;
     }
     
@@ -228,8 +224,8 @@ void liftShoulder(void) {
 void liftShoulderAuto(int shoulder_target_height) {
     double current_height = RE_center.Get_Count();
     
-    if(shoulder_target_height - 10 > current_height) shoulder_target_speed = 1.0;
-    else if(shoulder_target_height + 10 < current_height) shoulder_target_speed = -1.0;
+    if(shoulder_target_height + 15 < current_height) shoulder_target_speed = 1.0;
+    else if(shoulder_target_height - 15 > current_height) shoulder_target_speed = -1.0;
     else shoulder_target_speed = 0;
 }
 
@@ -286,6 +282,7 @@ void moveTail(void) {
 
 inline void receiveSignal(void) {
     int read_sign = XBee.getc();
+    static int error_count = 0;
     static int octets = 0;
     static int check_sum = 0x00;
 
@@ -304,6 +301,7 @@ inline void receiveSignal(void) {
                 check_sum_sign = read_sign;
                 if(((check_sum % 0x100) == read_sign) || ((check_sum == 0xFF) && (read_sign == 0xFE))) {
                     check_sum_correct = 1;
+                    error_count = 0;
                     extended_sign = extended_sign_pool;
                     chin_sign = chin_sign_pool;
                     neck_rx_sign = neck_rx_sign_pool;
@@ -312,6 +310,10 @@ inline void receiveSignal(void) {
                 }
                 else {
                     check_sum_correct = 0;
+                    ++error_count;
+                    if(error_count >= 5) {
+                        extended_sign = 0x00;
+                    }
                 }
                 octets = 0; 
                 break;
