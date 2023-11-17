@@ -8,6 +8,7 @@
 #define CENTER_ACCELERATION 0.4
 #define CURTAIN_ACCELERATION 0.3
 #define HELPER_ACCELERATION 0.6
+#define ROLLING_ACCELERATION 0.01
 
 SPI SPI_bus(PA_7, PA_6, PA_5);
 DigitalOut SPI_head(PB_8);
@@ -15,13 +16,12 @@ DigitalOut SPI_head(PB_8);
 RawSerial PC(USBTX, USBRX, 115200);
 RawSerial XBee(PC_10, PC_11, 230400);
 
-DriveMotor M_shoulder(PB_1, PB_6, 0.5);
+DriveMotor M_shoulder(PB_1, PB_6, 0.75);
 DriveMotor M_helper(PB_15, PA_10);
-DriveMotor M_hindfoot(PB_14, PA_9);
-DriveMotor M_center(PB_13, PA_8);
+DriveMotor M_hindfoot(PB_14, PA_9, 0.9);
+DriveMotor M_center(PB_13, PA_8, 0.9);
 
-DigitalOut M_rolling_D(PA_11);
-DigitalOut M_rolling(PB_4);
+DriveMotor M_rolling(PA_11, PB_4);
 
 PwmOut S_tail(PC_8);
 
@@ -44,6 +44,7 @@ void liftHelper(void);
 void liftCenterAuto(int center_target_height);
 void liftCenter(void);
 void liftHindfoot(void);
+void rollHelper(void);
 void moveTail(void);
 inline void receiveSignal(void);
 inline void decordSignal(void);
@@ -78,6 +79,7 @@ double helper_target_speed = 0.0;
 double shoulder_target_speed = 0.0;
 double center_target_speed = 0.0;
 double hindfoot_target_speed = 0.0;
+double rolling_target_speed = 0.0;
 
 void initRobot(void) {
     NVIC_SetPriority(ADC_IRQn, 0);
@@ -93,8 +95,7 @@ void initRobot(void) {
     M_hindfoot.stop();
     M_center.setFrequency(936);
     M_center.stop();
-    M_rolling_D = 1;
-    M_rolling = 0;
+    M_rolling.stop();
     RE_shoulder.Reset();
     RE_center.Reset();
     // RE_helper.Reset();
@@ -131,10 +132,18 @@ int main() {
         center_target_speed = 0.0;
         shoulder_target_speed = 0.0;
         helper_target_speed = 0.0;
-        int helper_rolling_speed = 0;
+        rolling_target_speed = 0.0;
 
         if(advanced_flag) {
-            hindfoot_target_speed = -lift_direction;
+            if(auto_start) {
+                shoulder_target_speed = lift_direction;
+            }
+            else {
+                hindfoot_target_speed = -lift_direction;
+                if(hindfoot_target_speed == 1.0) {
+                    hindfoot_target_speed = 0.85;
+                }
+            }
             center_target_speed = -helper_direction * 0.8;
             auto_count = 0;
         }
@@ -147,8 +156,8 @@ int main() {
             if(lift_direction == -1 && RE_shoulder.Get_Count() > -10) {
                 beyondAuto(); 
             }
-            else {
-                helper_rolling_speed = 1;
+            else if(!advanced_flag && lift_direction == 0) {
+                rolling_target_speed = -1.0;
             }
         }
 
@@ -156,7 +165,7 @@ int main() {
         liftCenter();
         liftHindfoot();
         liftHelper();
-        M_rolling = helper_rolling_speed;
+        rollHelper();
 
         PC.printf("\033[H");
         PC.printf("EN_shoulder:\t%05d\r\nshoulder:\t%05.2lf\r\nEN_center:\t%05d\r\ncenter: \t%05.2lf\r\nhelper: \t%05.2lf\r\ncurtain:\t%05.2lf",RE_shoulder.Get_Count(),M_shoulder.read(),RE_center.Get_Count(),M_center.read(),M_helper.read(),M_hindfoot.read());
@@ -174,29 +183,26 @@ void beyondAuto(void) {
 
     // PC.printf("\033[H%5d", count);
 
-    if(auto_count < 10) {
+    if(auto_count < 5) {
         RE_center.Reset();
     }
-    else if(auto_count < 100) {
-        liftCenterAuto(900);
+    else if(auto_count < 90) {
+        liftCenterAuto(1200);
     }
-    else if(auto_count < 200) {
-        liftCenterAuto(-10);
+    else if(auto_count < 150) {
+        liftCenterAuto(0);
     }
-    else if(auto_count < 300) {
+    else if(auto_count < 250) {
         hindfoot_target_speed = -1.0;
     }
+    else if(auto_count < 300) {
+        hindfoot_target_speed = 0.0;
+    }
     else if(auto_count < 450) {
+        hindfoot_target_speed = 0.8;
+    }
+    else if(auto_count < 500) {
         hindfoot_target_speed = 0.0;
-    }
-    else if(auto_count < 600) {
-        hindfoot_target_speed = 0.7;
-    }
-    else if(auto_count < 650) {
-        hindfoot_target_speed = 0.0;
-    }
-    else if(auto_count > 650) {
-        auto_count = 0;
     }
     auto_count++;
 }
@@ -205,19 +211,25 @@ void liftShoulder(void) {
     double current_speed = M_shoulder.read();
     current_speed += (shoulder_target_speed - current_speed) * SHOULDER_ACCELERATION;
     
-    if((RE_shoulder.Get_Count() > -10 || SW_shoulder_lower.read() == 0) && current_speed < 0) {
+    if((RE_shoulder.Get_Count() > -10 || SW_shoulder_lower.read() == 0) && current_speed < 0 && !(auto_start && advanced_flag)) {
         current_speed = 0;
     }
     
-    if((RE_shoulder.Get_Count() < -2500 || SW_shoulder_upper.read() == 0) && current_speed > 0) {
+    if((RE_shoulder.Get_Count() < -2450 || SW_shoulder_upper.read() == 0) && current_speed > 0) {
         current_speed = 0;
     }
     
     if(current_speed < 0) {
         current_speed *= SHOULDER_DOWN_SPEED;
     } 
+    if(current_speed > 0) {
+        auto_count = 0;
+    }
     M_shoulder.drive(current_speed);
 
+    if(auto_start && advanced_flag) {
+        RE_shoulder.Reset();
+    }
     // PC.printf("%d, %lf, %lf\r\n", RE_shoulder.Get_Count(), shoulder_target_speed, M_shoulder.read());
 }
 
@@ -247,8 +259,8 @@ void liftHelper(void) {
 void liftCenterAuto(int center_target_height) {
     double current_height = RE_center.Get_Count();
     
-    if(center_target_height - 30 > current_height) center_target_speed = -0.8;
-    else if(center_target_height + 30 < current_height) center_target_speed = 0.8;
+    if(center_target_height - 40 > current_height) center_target_speed = -0.8;
+    else if(center_target_height + 40 < current_height) center_target_speed = 0.8;
     else center_target_speed = 0;
 }
 
@@ -269,15 +281,21 @@ void liftHindfoot(void) {
     M_hindfoot.drive(current_speed);
 }
 
+void rollHelper(void) {
+    double current_speed = M_rolling.read();
+    current_speed += (rolling_target_speed - current_speed) * ROLLING_ACCELERATION;
+    M_rolling.drive(current_speed);
+}
+
 void moveTail(void) {
     static int count = 0;
-    if(count < 800) {
+    if(count < 100) {
         S_tail.pulsewidth_us(1000);
     }
-    else if(count < 1600) {
+    else if(count < 200) {
         S_tail.pulsewidth_us(1900);
     }
-    count = (++count) % 1600;
+    count = (++count) % 200;
 }
 
 inline void receiveSignal(void) {
