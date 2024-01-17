@@ -7,7 +7,7 @@
 #define SHOULDER_DOWN_SPEED 0.9
 #define CENTER_ACCELERATION 0.4
 #define CURTAIN_ACCELERATION 0.3
-#define HELPER_ACCELERATION 0.6
+#define HELPER_ACCELERATION 0.9
 #define ROLLING_ACCELERATION 0.01
 
 SPI SPI_bus(PA_7, PA_6, PA_5);
@@ -137,6 +137,7 @@ int main() {
         if(advanced_flag) {
             if(auto_start) {
                 shoulder_target_speed = lift_direction;
+                RE_center.Reset();
             }
             else {
                 hindfoot_target_speed = -lift_direction;
@@ -156,7 +157,7 @@ int main() {
             if(lift_direction == -1 && RE_shoulder.Get_Count() > -10) {
                 beyondAuto(); 
             }
-            else if(!advanced_flag && lift_direction == 0) {
+            else if(!advanced_flag && lift_direction >= 0) {
                 rolling_target_speed = -1.0;
             }
         }
@@ -182,26 +183,23 @@ void beyondAuto(void) {
     encoder_lock = 1;
 
     // PC.printf("\033[H%5d", count);
-
-    if(auto_count < 5) {
-        RE_center.Reset();
+    if(auto_count < 200) {
+        liftCenterAuto(1000);
     }
-    else if(auto_count < 90) {
-        liftCenterAuto(1200);
-    }
-    else if(auto_count < 150) {
+    else if(auto_count < 350) {
         liftCenterAuto(0);
     }
-    else if(auto_count < 250) {
+    else if(auto_count < 450) {
+        liftCenterAuto(0);
         hindfoot_target_speed = -1.0;
     }
-    else if(auto_count < 300) {
+    else if(auto_count < 500) {
         hindfoot_target_speed = 0.0;
     }
-    else if(auto_count < 450) {
+    else if(auto_count < 650) {
         hindfoot_target_speed = 0.8;
     }
-    else if(auto_count < 500) {
+    else if(auto_count < 700) {
         hindfoot_target_speed = 0.0;
     }
     auto_count++;
@@ -259,8 +257,8 @@ void liftHelper(void) {
 void liftCenterAuto(int center_target_height) {
     double current_height = RE_center.Get_Count();
     
-    if(center_target_height - 40 > current_height) center_target_speed = -0.8;
-    else if(center_target_height + 40 < current_height) center_target_speed = 0.8;
+    if(center_target_height - 40 > current_height) center_target_speed = -0.7;
+    else if(center_target_height + 40 < current_height) center_target_speed = 0.9;
     else center_target_speed = 0;
 }
 
@@ -329,7 +327,7 @@ inline void receiveSignal(void) {
                 else {
                     check_sum_correct = 0;
                     ++error_count;
-                    if(error_count >= 5) {
+                    if(error_count >= 4) {
                         extended_sign = 0x00;
                     }
                 }
